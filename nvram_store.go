@@ -10,8 +10,6 @@ import (
 	"github.com/brutella/hap/log"
 )
 
-const nvramPrefix = "hap_"
-
 // NvramStore implements the Store interface using router NVRAM.
 // Each key is stored as a separate NVRAM variable.
 //
@@ -28,12 +26,15 @@ const nvramPrefix = "hap_"
 // next startup (new uuid/keypair). Once paired, the commit includes all pending
 // changes, so keypair and pairing stay in sync.
 type NvramStore struct {
-	mu sync.RWMutex
+	mu     sync.RWMutex
+	prefix string
 }
 
-// NewNvramStore creates a new NVRAM-backed store.
-func NewNvramStore() *NvramStore {
-	return &NvramStore{}
+// NewNvramStore creates a new NVRAM-backed store with the given key prefix.
+// The prefix should be unique per accessory to avoid conflicts when running
+// multiple accessories on the same router (e.g. "hap_timer_", "hap_light_").
+func NewNvramStore(prefix string) *NvramStore {
+	return &NvramStore{prefix: prefix}
 }
 
 // nvram command wrappers - can be replaced in tests
@@ -70,16 +71,16 @@ var (
 
 // nvramKey converts a Store key to an NVRAM variable name.
 // Pairing keys are converted from hex-encoded UUIDs to readable UUID strings.
-func nvramKey(key string) string {
+func (s *NvramStore) nvramKey(key string) string {
 	if strings.HasSuffix(key, ".pairing") {
 		hexName := strings.TrimSuffix(key, ".pairing")
 		name, err := hex.DecodeString(hexName)
 		if err != nil {
-			return nvramPrefix + key
+			return s.prefix + key
 		}
-		return nvramPrefix + "p_" + string(name)
+		return s.prefix + "p_" + string(name)
 	}
-	return nvramPrefix + key
+	return s.prefix + key
 }
 
 // Set stores a key-value pair in NVRAM.
@@ -89,7 +90,7 @@ func (s *NvramStore) Set(key string, value []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	nkey := nvramKey(key)
+	nkey := s.nvramKey(key)
 
 	var encoded string
 	if key == "configHash" {
@@ -116,7 +117,7 @@ func (s *NvramStore) Get(key string) ([]byte, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	nkey := nvramKey(key)
+	nkey := s.nvramKey(key)
 
 	value, err := nvramGet(nkey)
 	if err != nil {
@@ -139,7 +140,7 @@ func (s *NvramStore) Delete(key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	nkey := nvramKey(key)
+	nkey := s.nvramKey(key)
 
 	if err := nvramUnset(nkey); err != nil {
 		return err
@@ -174,17 +175,17 @@ func (s *NvramStore) KeysWithSuffix(suffix string) (keys []string, err error) {
 		}
 		nkey := parts[0]
 
-		if !strings.HasPrefix(nkey, nvramPrefix) {
+		if !strings.HasPrefix(nkey, s.prefix) {
 			continue
 		}
 
-		if suffix == ".pairing" && strings.HasPrefix(nkey, nvramPrefix+"p_") {
+		if suffix == ".pairing" && strings.HasPrefix(nkey, s.prefix+"p_") {
 			// Extract UUID string and reconstruct original key
-			uuidStr := strings.TrimPrefix(nkey, nvramPrefix+"p_")
+			uuidStr := strings.TrimPrefix(nkey, s.prefix+"p_")
 			originalKey := hex.EncodeToString([]byte(uuidStr)) + ".pairing"
 			keys = append(keys, originalKey)
 		} else {
-			key := strings.TrimPrefix(nkey, nvramPrefix)
+			key := strings.TrimPrefix(nkey, s.prefix)
 			if strings.HasSuffix(key, suffix) {
 				keys = append(keys, key)
 			}

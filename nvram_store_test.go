@@ -45,7 +45,7 @@ func setupMockNvram() *mockNvram {
 
 func TestNvramStore_SetGet(t *testing.T) {
 	setupMockNvram()
-	store := NewNvramStore()
+	store := NewNvramStore("hap_")
 
 	// Test setting and getting a simple value
 	err := store.Set("uuid", []byte("AA:BB:CC:DD:EE:FF"))
@@ -64,7 +64,7 @@ func TestNvramStore_SetGet(t *testing.T) {
 
 func TestNvramStore_CommitOnPairing(t *testing.T) {
 	mock := setupMockNvram()
-	store := NewNvramStore()
+	store := NewNvramStore("hap_")
 
 	// Set non-pairing keys - should not commit
 	store.Set("uuid", []byte("AA:BB:CC:DD:EE:FF"))
@@ -87,7 +87,7 @@ func TestNvramStore_CommitOnPairing(t *testing.T) {
 
 func TestNvramStore_Delete(t *testing.T) {
 	setupMockNvram()
-	store := NewNvramStore()
+	store := NewNvramStore("hap_")
 
 	store.Set("test", []byte("value"))
 
@@ -109,7 +109,7 @@ func TestNvramStore_Delete(t *testing.T) {
 
 func TestNvramStore_DeletePairingCommits(t *testing.T) {
 	mock := setupMockNvram()
-	store := NewNvramStore()
+	store := NewNvramStore("hap_")
 
 	pairingKey := "33313046433135382d423239452d344635322d423542322d413734324344464345383141.pairing"
 	store.Set(pairingKey, []byte(`{"Name":"310FC158-B29E-4F52-B5B2-A742CDFCE81A"}`))
@@ -124,7 +124,7 @@ func TestNvramStore_DeletePairingCommits(t *testing.T) {
 
 func TestNvramStore_KeysWithSuffix(t *testing.T) {
 	setupMockNvram()
-	store := NewNvramStore()
+	store := NewNvramStore("hap_")
 
 	// Set some regular keys
 	store.Set("uuid", []byte("test"))
@@ -158,7 +158,7 @@ func TestNvramStore_KeysWithSuffix(t *testing.T) {
 
 func TestNvramStore_BinaryData(t *testing.T) {
 	mock := setupMockNvram()
-	store := NewNvramStore()
+	store := NewNvramStore("hap_")
 
 	// Test with binary data including null bytes and high bytes (like MD5 hash)
 	binary := []byte{0x00, 0x01, 0xFF, 0xFE, 0x80, 0x7F}
@@ -193,7 +193,7 @@ func TestNvramStore_BinaryData(t *testing.T) {
 
 func TestNvramStore_JSONData(t *testing.T) {
 	mock := setupMockNvram()
-	store := NewNvramStore()
+	store := NewNvramStore("hap_")
 
 	// Test with JSON data similar to what hap stores
 	keypair := `{"Public":"CCSWr6dPt0Nqo6OjmG21fQA0ysUED7/nXV9lTQ+4+Us=","Private":"ZmJmNjA4YmFmNzVmZGZkMTVjOWRhZWQ1NzU4NzY0MmMIJJavp0+3Q2qjo6OYbbV9ADTKxQQPv+ddX2VND7j5Sw=="}`
@@ -221,7 +221,7 @@ func TestNvramStore_JSONData(t *testing.T) {
 
 func TestNvramStore_TextValuesStoredAsIs(t *testing.T) {
 	mock := setupMockNvram()
-	store := NewNvramStore()
+	store := NewNvramStore("hap_")
 
 	tests := []struct {
 		key   string
@@ -253,6 +253,8 @@ func TestNvramStore_TextValuesStoredAsIs(t *testing.T) {
 }
 
 func TestNvramKey(t *testing.T) {
+	store := NewNvramStore("hap_")
+
 	tests := []struct {
 		input    string
 		expected string
@@ -265,7 +267,7 @@ func TestNvramKey(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := nvramKey(tt.input)
+		result := store.nvramKey(tt.input)
 		if result != tt.expected {
 			t.Errorf("nvramKey(%s) = %s, expected %s", tt.input, result, tt.expected)
 		}
@@ -273,7 +275,7 @@ func TestNvramKey(t *testing.T) {
 
 	// Test pairing key - should be converted to readable UUID
 	pairingKey := "33313046433135382d423239452d344635322d423542322d413734324344464345383141.pairing"
-	result := nvramKey(pairingKey)
+	result := store.nvramKey(pairingKey)
 
 	expected := "hap_p_310FC158-B29E-4F52-B5B2-A742CDFCE81A"
 	if result != expected {
@@ -283,5 +285,36 @@ func TestNvramKey(t *testing.T) {
 	// Should be under 64 chars (NVRAM key limit)
 	if len(result) > 64 {
 		t.Errorf("Pairing key exceeds 64 char limit: %d chars", len(result))
+	}
+}
+
+func TestNvramStore_DifferentPrefixes(t *testing.T) {
+	mock := setupMockNvram()
+
+	// Create two stores with different prefixes
+	timerStore := NewNvramStore("timer_")
+	lightStore := NewNvramStore("light_")
+
+	// Set the same key in both stores
+	timerStore.Set("uuid", []byte("AA:BB:CC:DD:EE:FF"))
+	lightStore.Set("uuid", []byte("11:22:33:44:55:66"))
+
+	// Verify they're stored with different prefixes
+	if mock.data["timer_uuid"] != "AA:BB:CC:DD:EE:FF" {
+		t.Errorf("timer_uuid: expected AA:BB:CC:DD:EE:FF, got %s", mock.data["timer_uuid"])
+	}
+	if mock.data["light_uuid"] != "11:22:33:44:55:66" {
+		t.Errorf("light_uuid: expected 11:22:33:44:55:66, got %s", mock.data["light_uuid"])
+	}
+
+	// Verify each store retrieves its own value
+	timerVal, _ := timerStore.Get("uuid")
+	lightVal, _ := lightStore.Get("uuid")
+
+	if string(timerVal) != "AA:BB:CC:DD:EE:FF" {
+		t.Errorf("timerStore.Get: expected AA:BB:CC:DD:EE:FF, got %s", timerVal)
+	}
+	if string(lightVal) != "11:22:33:44:55:66" {
+		t.Errorf("lightStore.Get: expected 11:22:33:44:55:66, got %s", lightVal)
 	}
 }
